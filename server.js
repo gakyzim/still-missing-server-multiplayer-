@@ -247,6 +247,31 @@ function broadcastRoom(room, data) {
 
 
 // ============================================================
+// AVISAR TODOS EXCETO UM JOGADOR
+// ============================================================
+
+function broadcastRoomExcept(
+    room,
+    excludedSocket,
+    data
+) {
+
+    for (const player of room.players) {
+
+        if (player.socket === excludedSocket) {
+            continue;
+        }
+
+
+        send(
+            player.socket,
+            data
+        );
+    }
+}
+
+
+// ============================================================
 // ENCONTRAR JOGADOR
 // ============================================================
 
@@ -260,10 +285,289 @@ function getPlayerFromSocket(room, socket) {
 
 
 // ============================================================
+// VALIDAR NÚMERO
+// ============================================================
+
+function isValidNumber(value) {
+
+    return (
+        typeof value === "number" &&
+        Number.isFinite(value)
+    );
+}
+
+
+// ============================================================
+// VALIDAR VECTOR
+// ============================================================
+
+function isValidVector3(value) {
+
+    if (
+        !value ||
+        typeof value !== "object"
+    ) {
+
+        return false;
+    }
+
+
+    return (
+        isValidNumber(value.x) &&
+        isValidNumber(value.y) &&
+        isValidNumber(value.z)
+    );
+}
+
+
+// ============================================================
+// LIMITAR VALOR NUMÉRICO
+// ============================================================
+
+function clamp(value, min, max) {
+
+    return Math.max(
+        min,
+        Math.min(max, value)
+    );
+}
+
+
+// ============================================================
+// ATUALIZAR ESTADO DO JOGADOR
+// ============================================================
+
+function updatePlayerState(
+    socket,
+    message
+) {
+
+    // --------------------------------------------------------
+    // PRECISA ESTAR EM UMA SALA
+    // --------------------------------------------------------
+
+    if (!socket.roomCode) {
+
+        send(socket, {
+
+            type: "error",
+
+            message:
+                "Você não está em uma sala."
+        });
+
+        return;
+    }
+
+
+    const room = rooms.get(
+        socket.roomCode
+    );
+
+
+    if (!room) {
+
+        send(socket, {
+
+            type: "error",
+
+            message:
+                "Sala não encontrada."
+        });
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // ENCONTRAR JOGADOR PELO SOCKET
+    // --------------------------------------------------------
+
+    const player =
+        getPlayerFromSocket(
+            room,
+            socket
+        );
+
+
+    if (!player) {
+
+        send(socket, {
+
+            type: "error",
+
+            message:
+                "Jogador não encontrado na sala."
+        });
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // A PARTIDA PRECISA TER COMEÇADO
+    // --------------------------------------------------------
+
+    if (!room.gameStarted) {
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // VALIDAR POSIÇÃO
+    // --------------------------------------------------------
+
+    if (
+        !isValidVector3(
+            message.position
+        )
+    ) {
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // VALIDAR VELOCIDADE
+    // --------------------------------------------------------
+
+    if (
+        !isValidVector3(
+            message.velocity
+        )
+    ) {
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // VALIDAR ROTAÇÃO
+    // --------------------------------------------------------
+
+    if (
+        !isValidNumber(
+            message.rotation_y
+        )
+    ) {
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // VALIDAR CHÃO
+    // --------------------------------------------------------
+
+    const isOnFloor =
+        message.is_on_floor === true;
+
+
+    // --------------------------------------------------------
+    // LIMITES DE SEGURANÇA
+    // --------------------------------------------------------
+
+    const position = {
+
+        x: clamp(
+            message.position.x,
+            -10000,
+            10000
+        ),
+
+        y: clamp(
+            message.position.y,
+            -10000,
+            10000
+        ),
+
+        z: clamp(
+            message.position.z,
+            -10000,
+            10000
+        )
+    };
+
+
+    const velocity = {
+
+        x: clamp(
+            message.velocity.x,
+            -100,
+            100
+        ),
+
+        y: clamp(
+            message.velocity.y,
+            -100,
+            100
+        ),
+
+        z: clamp(
+            message.velocity.z,
+            -100,
+            100
+        )
+    };
+
+
+    const rotationY = clamp(
+        message.rotation_y,
+        -100000,
+        100000
+    );
+
+
+    // --------------------------------------------------------
+    // SALVAR ESTADO NO SERVIDOR
+    // --------------------------------------------------------
+
+    player.state = {
+
+        position: position,
+
+        rotation_y: rotationY,
+
+        velocity: velocity,
+
+        is_on_floor: isOnFloor
+    };
+
+
+    // --------------------------------------------------------
+    // ENVIAR PARA OS OUTROS JOGADORES
+    // --------------------------------------------------------
+
+    broadcastRoomExcept(
+        room,
+        socket,
+        {
+
+            type: "player_state",
+
+            player_id: player.id,
+
+            position: position,
+
+            rotation_y: rotationY,
+
+            velocity: velocity,
+
+            is_on_floor: isOnFloor
+        }
+    );
+}
+
+
+// ============================================================
 // CRIAR SALA
 // ============================================================
 
-function createRoom(socket, requestedNickname) {
+function createRoom(
+    socket,
+    requestedNickname
+) {
 
     if (socket.roomCode !== null) {
 
@@ -311,7 +615,9 @@ function createRoom(socket, requestedNickname) {
 
         nickname: nickname,
 
-        isHost: true
+        isHost: true,
+
+        state: null
     };
 
 
@@ -482,7 +788,9 @@ function joinRoom(
 
         nickname: nickname,
 
-        isHost: false
+        isHost: false,
+
+        state: null
     };
 
 
@@ -565,7 +873,10 @@ function joinRoom(
 // INICIAR PARTIDA
 // ============================================================
 
-function startGame(socket, requestedRoomCode) {
+function startGame(
+    socket,
+    requestedRoomCode
+) {
 
     const roomCode =
         String(
@@ -664,7 +975,7 @@ function startGame(socket, requestedRoomCode) {
     );
 
     console.log(
-        `PARTIDA COMEÇOU`
+        "PARTIDA COMEÇOU"
     );
 
     console.log(
@@ -801,9 +1112,6 @@ function removePlayerFromRoom(
 
     if (wasHost) {
 
-        // Se ainda existem jogadores,
-        // escolher um novo host.
-
         if (room.players.length > 0) {
 
             room.players[0].isHost = true;
@@ -826,7 +1134,6 @@ function removePlayerFromRoom(
                 nickname:
                     room.players[0].nickname
             });
-
         }
     }
 
@@ -1012,6 +1319,23 @@ wss.on("connection", (socket) => {
                 );
 
 
+            if (
+                !message ||
+                typeof message !== "object"
+            ) {
+
+                send(socket, {
+
+                    type: "error",
+
+                    message:
+                        "Mensagem inválida."
+                });
+
+                return;
+            }
+
+
             console.log(
                 "Mensagem recebida:",
                 message.type
@@ -1082,6 +1406,24 @@ wss.on("connection", (socket) => {
                 startGame(
                     socket,
                     message.room_code
+                );
+
+                return;
+            }
+
+
+            // =================================================
+            // ESTADO DO JOGADOR
+            // =================================================
+
+            if (
+                message.type ===
+                "player_state"
+            ) {
+
+                updatePlayerState(
+                    socket,
+                    message
                 );
 
                 return;
